@@ -46,7 +46,7 @@ def train(train_noisy_files, train_clean_files, num_epochs, save_model_path, noi
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
     #初始化模型
-    model = DnCNN(channels=1, num_layers=10, features=64).cuda()
+    model = DnCNN(channels=1, num_layers=11, features=64).cuda()
 
     #损失函数和优化器
     criterion = nn.MSELoss()
@@ -101,7 +101,7 @@ def train(train_noisy_files, train_clean_files, num_epochs, save_model_path, noi
 def main():
     
     save_model_path = 'result/model'
-    epochs = 50
+    epochs = 100
     noise_level = 2    #train不同模型时需要更改
     train_noisy_path = f'data/{noise_level}_percent_noise/'  #这里只填写路径，不需要文件名
     train_clean_path = 'data/gt/'
