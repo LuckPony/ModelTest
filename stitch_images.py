@@ -9,7 +9,7 @@ def sort_key(filename):
     match = re.search(r'(\d+)epochs', filename)
     return int(match.group(1)) if match else 0
 
-def stitch_validation_images(val_dir, output_path, num_images=10):
+def stitch_validation_images(val_dir, output_path, num_images=5):
     """
     将验证图片按垂直顺序拼接成一张大图
     
@@ -55,7 +55,7 @@ def stitch_validation_images(val_dir, output_path, num_images=10):
             img = cv2.resize(img, (img_width, img_height))
             
         # 放置到画布上
-        stitched_img[i*img_height:(i+1)*img_height, :] = img
+        stitched_img[i*img_height:(i+1)*img_height, :img_width] = img
         
         # 在图片左侧添加epoch标签
         epoch_num = sort_key(img_file)

@@ -46,7 +46,7 @@ def train(train_noisy_files, train_clean_files, num_epochs, save_model_path, noi
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
     #初始化模型
-    model = DnCNN(channels=1, num_layers=11, features=64).cuda()
+    model = DnCNN(channels=1, num_layers=17, features=64).cuda()
 
     #损失函数和优化器
     criterion = nn.MSELoss()

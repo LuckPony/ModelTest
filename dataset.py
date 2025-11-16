@@ -1,9 +1,10 @@
+import random
 import torch
 from torch.utils.data import Dataset
 import numpy as np
 import nibabel as nib
 class DenoiseDataset(Dataset):
-    def __init__(self,noisy_files, clean_files, patch_size=32):
+    def __init__(self,noisy_files, clean_files, patch_size=64):
         self.noisy_files = noisy_files
         self.clean_files = clean_files
         self.patch = patch_size
@@ -21,7 +22,6 @@ class DenoiseDataset(Dataset):
         #由于图像是4维的，先忽略通道维度，逐方向运行
         noisy = noisy[..., 0]   #shape: (D,H,W)
         clean = clean[..., 0]   #shape: (D,H,W)
-        
 
         #归一化
         # print("执行归一化...")
@@ -30,7 +30,19 @@ class DenoiseDataset(Dataset):
         noisy = 2*noisy - 1
         clean = 2*clean - 1
 
-        #转换成tensor
+        #随机裁剪3D patch
+        D, H, W = noisy.shape
+        p = self.patch
+        if D < p or H < p or W < p:
+            raise ValueError(f"Patch size {p} is larger than image size {D}x{H}x{W}")
+        #随机选择起点
+        dz = random.randint(0, D - p)
+        dy = random.randint(0, H - p)
+        dx = random.randint(0, W - p)
+        noisy = noisy[dz:dz+p, dy:dy+p, dx:dx+p]
+        clean = clean[dz:dz+p, dy:dy+p, dx:dx+p]
+
+        #转换成tensor(1, D, H, W)
         noisy = torch.tensor(noisy, dtype=torch.float32).unsqueeze(0)#增加channel维度(batch维度会在DataLoader的时候新增一维)，保持Conv3D格式
         clean = torch.tensor(clean, dtype=torch.float32).unsqueeze(0)
         
