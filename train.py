@@ -43,11 +43,11 @@ def plot_val(clean_slice, noisy_slice, denoised_slice, noise_level,epochs):
 def train(train_noisy_files, train_clean_files, num_epochs, save_model_path, noise_level,val_noisy_files, val_clean_files):
     #加载数据
     train_dataset = DenoiseDataset(train_noisy_files, train_clean_files)
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
     #初始化模型
-    model = DnCNN(channels=1, num_layers=17, features=64).cuda()
-
+    model = DnCNN(channels=1, num_layers=12, features=64).cuda()
+    
     #损失函数和优化器
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -101,7 +101,7 @@ def train(train_noisy_files, train_clean_files, num_epochs, save_model_path, noi
 def main():
     
     save_model_path = 'result/model'
-    epochs = 100
+    epochs = 1
     noise_level = 2    #train不同模型时需要更改
     train_noisy_path = f'data/{noise_level}_percent_noise/'  #这里只填写路径，不需要文件名
     train_clean_path = 'data/gt/'
