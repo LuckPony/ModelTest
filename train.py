@@ -3,7 +3,7 @@ from pathlib import Path
 from numpy import average
 import torch
 from torch.utils.data import DataLoader
-from dataset import DenoiseDataset
+from dataset import DenoiseDataset, ValDataset
 from model.dncnn import DnCNN
 import torch.nn as nn
 from tqdm import tqdm
@@ -17,12 +17,12 @@ def plot_loss(loss_list,noise_level):
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title(f'Loss of DnCNN on {noise_level}% noise')
-    plt.savefig(f'result/loss/{noise_level}%noise_loss_{len(loss_list)}epochs.png')
+    plt.savefig(f'result/loss/{noise_level}p_noise_loss_{len(loss_list)}epochs.png')
     plt.close() #画完图后关闭画布，防止与下次绘图交叉影响
 
 def plot_val(clean_slice, noisy_slice, denoised_slice, noise_level,epochs):
-    psnr_noisy = psnr(clean_slice, noisy_slice, data_range=clean_slice.max() - clean_slice.min())
-    psnr_denoised = psnr(clean_slice, denoised_slice, data_range=clean_slice.max() - clean_slice.min())
+    psnr_noisy = psnr(clean_slice, noisy_slice, data_range=2.0)
+    psnr_denoised = psnr(clean_slice, denoised_slice, data_range=2.0)
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
     imgs = [noisy_slice, denoised_slice, clean_slice]
     titles = [
@@ -37,17 +37,19 @@ def plot_val(clean_slice, noisy_slice, denoised_slice, noise_level,epochs):
         ax.axis('off')
 
     plt.tight_layout()
-    plt.savefig(f'result/val/{noise_level}%noise_{epochs}epochs.png')
+    plt.savefig(f'result/val/{noise_level}p_noise_{epochs}epochs.png')
     plt.close() #画完图后关闭画布，防止与下次绘图交叉影响
 
 def train(train_noisy_files, train_clean_files, num_epochs, save_model_path, noise_level,val_noisy_files, val_clean_files):
     #加载数据
-    train_dataset = DenoiseDataset(train_noisy_files, train_clean_files)
-    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
+    train_dataset = DenoiseDataset(train_noisy_files, train_clean_files, patch_size=64)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    val_dataset = ValDataset(val_noisy_files, val_clean_files)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
     #初始化模型
     model = DnCNN(channels=1, num_layers=12, features=64).cuda()
-    
+
     #损失函数和优化器
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -78,30 +80,24 @@ def train(train_noisy_files, train_clean_files, num_epochs, save_model_path, noi
             print(f'Evaluate after epoch {epoch+1}...')
             model.eval()
             with torch.no_grad():
-                if val_clean_files and val_noisy_files:
-                    val_dataset = DenoiseDataset(val_noisy_files, val_clean_files)
-                    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+                    
                     for noisy, clean in val_loader:
                         noisy, clean = noisy.cuda(), clean.cuda()
                         denoised = model(noisy).cpu().numpy().squeeze()
                         clean = clean.cpu().numpy().squeeze()
                         noisy = noisy.cpu().numpy().squeeze()
-                        slice = noisy.shape[2]//2
-                        denoised_slice = denoised[...,slice]
-                        clean_slice = clean[...,slice]
-                        noisy_slice = noisy[...,slice]
-                        plot_val(clean_slice, noisy_slice, denoised_slice, noise_level,epoch+1)
+                        plot_val(clean, noisy, denoised, noise_level,epoch+1)
                             
 
                             
 
     torch.save(model.state_dict(), f'{save_model_path}/model_{noise_level}%noise.pth')
-    print(f'Model saved at {save_model_path}/model_{noise_level}%noise.pth')
+    print(f'Model saved at {save_model_path}/model_{noise_level}p_noise.pth')
 
 def main():
     
     save_model_path = 'result/model'
-    epochs = 1
+    epochs = 100
     noise_level = 2    #train不同模型时需要更改
     train_noisy_path = f'data/{noise_level}_percent_noise/'  #这里只填写路径，不需要文件名
     train_clean_path = 'data/gt/'
@@ -113,6 +109,7 @@ def main():
     #这里暂时设置验证集和训练集一样，后续需要更改
     val_noisy_files = train_noisy_files
     val_clean_files = train_clean_files
+
     train(train_noisy_files, train_clean_files, epochs, save_model_path, noise_level, val_noisy_files, val_clean_files)
 
 if __name__ == '__main__':
