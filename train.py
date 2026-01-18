@@ -99,7 +99,8 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
                         clean = clean.cpu().numpy().squeeze()
                         noisy = noisy.cpu().numpy().squeeze()
                         mask = mask.cpu().numpy().squeeze()
-                        denoised = denoised * mask   #背景区域设为0
+                        # denoised = denoised * mask   #背景区域设为0
+                        denoised = denoised * mask + (-1) * (1 - mask)  # 背景区域设置为-1（黑色）
                         plot_val(clean, noisy, denoised,mask, noise_level,epoch+1, save_val_dir)
                             
 
@@ -113,7 +114,7 @@ def main():
     save_model_path = f'result/model/{folder_name}/'
     Path(save_model_path).mkdir(parents=True, exist_ok=True)
     epochs = 100
-    noise_level = 2    #train不同模型时需要更改
+    noise_level = 4    #train不同模型时需要更改
     train_noisy_path = f'data/{noise_level}_percent_noise/'  #这里只填写路径，不需要文件名
     train_clean_path = 'data/gt/'
     train_mask_path = 'data/mask/'
