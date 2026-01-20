@@ -20,7 +20,7 @@ def masked_psnr(clean, denoised, mask, data_range):
     mse = ((clean - denoised) ** 2 * mask).sum() / (mask.sum() + 1e-8)
     return 10 * np.log10(data_range ** 2 / mse)
 def test(noisy_files, clean_files, mask_files, model_path,norm_path,save_path,noise_level):
-    folder_data = datetime.now().strftime("%Y%m%d%H%M")
+    folder_data = datetime.now().strftime("%Y%m%d%H%M")+f'_{noise_level}p'
     # 加载数据
     print("Loading data...")
     test_dataset = TestDataset(noisy_files, clean_files, mask_files)
@@ -89,11 +89,12 @@ def test(noisy_files, clean_files, mask_files, model_path,norm_path,save_path,no
 
 
 def main():
-    noise_level = 2
+    noise_level = 6
+    data_folder = 202601182245
     test_noisy_path = "F:/Code/Research/Idea/ModelTest/data/test/noise/"
     test_clean_path = "F:/Code/Research/Idea/ModelTest/data/test/gt/"
     test_mask_path = 'F:/Code/Research/Idea/ModelTest/data/test/mask/'
-    model_path = f"result/model/202601121759/model_{noise_level}%noise.pth"
+    model_path = f"result/model/{data_folder}/model_{noise_level}%noise.pth"
     norm_path = "normalize/test_minmax.json"
     save_path = f"result/denoised"
     test_noisy_files = []

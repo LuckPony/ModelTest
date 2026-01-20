@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from shlex import join
 from numpy import average
 import torch
 from torch.utils.data import DataLoader
@@ -21,8 +22,8 @@ def plot_loss(loss_list,noise_level,save_loss_dir):
     plt.savefig(f'{save_loss_dir}/{noise_level}p_noise_loss_{len(loss_list)}epochs.png')
     plt.close() #画完图后关闭画布，防止与下次绘图交叉影响
 
-def plot_val(clean_slice, noisy_slice, denoised_slice,mask_slice, noise_level,epochs, save_val_dir):
-    psnr_noisy = masked_psnr(clean_slice, noisy_slice,mask_slice, data_range=2.0)
+def plot_val(clean_slice, noisy_slice, denoised_slice, mask_slice, noise_level, epochs, save_val_dir):
+    psnr_noisy = masked_psnr(clean_slice, noisy_slice, mask_slice, data_range=2.0)
     psnr_denoised = masked_psnr(clean_slice, denoised_slice,mask_slice, data_range=2.0)
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
     imgs = [noisy_slice, denoised_slice, clean_slice]
@@ -47,7 +48,8 @@ def masked_psnr(clean, denoised, mask, data_range=2.0):
 
 def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, save_model_path, noise_level,val_noisy_files, val_clean_files, val_mask_files):
     #设置保存路径
-    folder_name = datetime.now().strftime("%Y%m%d%H%M")
+    folder_name = datetime.now().strftime("%Y%m%d%H%M")+f'_{noise_level}p'
+    
     save_val_dir = f'result/val/{folder_name}/'
     Path(save_val_dir).mkdir(parents=True, exist_ok=True)
     save_loss_dir = f'result/loss/{folder_name}/'
@@ -102,23 +104,20 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
                         # denoised = denoised * mask   #背景区域设为0
                         denoised = denoised * mask + (-1) * (1 - mask)  # 背景区域设置为-1（黑色）
                         plot_val(clean, noisy, denoised,mask, noise_level,epoch+1, save_val_dir)
-                            
-
-                            
-
+ 
     torch.save(model.state_dict(), f'{save_model_path}/model_{noise_level}%noise.pth')
     print(f'Model saved at {save_model_path}/model_{noise_level}p_noise.pth')
 
 def main():
-    folder_name = datetime.now().strftime("%Y%m%d%H%M")
+    epochs = 100
+    noise_level = 6    #train不同模型时需要更改
+    folder_name = datetime.now().strftime("%Y%m%d%H%M")+f'_{noise_level}p'
     save_model_path = f'result/model/{folder_name}/'
     Path(save_model_path).mkdir(parents=True, exist_ok=True)
-    epochs = 100
-    noise_level = 4    #train不同模型时需要更改
     train_noisy_path = f'data/{noise_level}_percent_noise/'  #这里只填写路径，不需要文件名
     train_clean_path = 'data/gt/'
     train_mask_path = 'data/mask/'
-    train_noisy_files = []
+    train_noisy_files = [] 
     train_clean_files = []
     train_mask_files = []
     for file in os.listdir(train_clean_path):

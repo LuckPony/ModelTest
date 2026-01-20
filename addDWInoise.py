@@ -70,10 +70,10 @@ def add_rician_noise(input_file, output_file, noise_percentage):
 
 
 def main():
-    percentage = 4 # 例如加 2% 噪声（σ=0.02）
-    file_index = 103818
-    input_dir = f"F:/Code/Research/Idea/ModelTest/data/gt/sub-{file_index}__dwi.nii.gz"
-    output_dir = f"F:/Code/Research/Idea/ModelTest/data/4_percent_noise/sub-{file_index}__dwi_{percentage}%noise.nii.gz"
+    percentage = 6 # 添加噪声（σ=0.0？）
+    file_index = 105923
+    input_dir = f"./data/test/gt/sub-{file_index}__dwi.nii.gz"
+    output_dir = f"./data/test/noise/sub-{file_index}__dwi_{percentage}%noise.nii.gz"
 
     # 检查输入文件是否存在
     if not os.path.exists(input_dir):
