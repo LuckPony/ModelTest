@@ -91,9 +91,9 @@ def test(noisy_files, clean_files, mask_files, model_path,norm_path,save_path,no
 def main():
     noise_level = 6
     data_folder = 202601182245
-    test_noisy_path = "F:/Code/Research/Idea/ModelTest/data/test/noise/"
-    test_clean_path = "F:/Code/Research/Idea/ModelTest/data/test/gt/"
-    test_mask_path = 'F:/Code/Research/Idea/ModelTest/data/test/mask/'
+    test_noisy_path = "./data/test/noise/"
+    test_clean_path = "./data/test/gt/"
+    test_mask_path = './data/test/mask/'
     model_path = f"result/model/{data_folder}/model_{noise_level}%noise.pth"
     norm_path = "normalize/test_minmax.json"
     save_path = f"result/denoised"
