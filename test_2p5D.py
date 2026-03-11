@@ -99,12 +99,12 @@ def test(noisy_files, clean_files, mask_files, model_path, norm_path, save_path,
         print("Saved:", out_file)
 
 def main():
-    noise_level = 6
-    data_folder = "202601182245" 
+    noise_level = 4
+    data_folder = "202603101006_4p" 
     test_noisy_path = "./data/test/noise/"
     test_clean_path = "./data/test/gt/"
     test_mask_path = './data/test/mask/'
-    model_path = f"result/model/{data_folder}/model_{noise_level}%noise.pth"
+    model_path = f"result/model/{data_folder}/model_{noise_level}%noise_final.pth"
     norm_path = "normalize/test_minmax.json"
     save_path = f"result/denoised"
     

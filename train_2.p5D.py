@@ -19,7 +19,7 @@ def plot_loss(loss_list,noise_level,save_loss_dir):
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title(f'Loss of DnCNN on {noise_level}% noise')
-    plt.savefig(f'{save_loss_dir}/{noise_level}p_noise_loss_{len(loss_list)}epochs.png')
+    plt.savefig(os.path.join(save_loss_dir, f'{noise_level}p_noise_loss_{len(loss_list)}epochs.png'))
     plt.close() #画完图后关闭画布，防止与下次绘图交叉影响
 
 def plot_val(clean_slice, noisy_slice, denoised_slice, mask_slice, noise_level, epochs, save_val_dir):
@@ -39,7 +39,7 @@ def plot_val(clean_slice, noisy_slice, denoised_slice, mask_slice, noise_level, 
         ax.axis('off')
 
     plt.tight_layout()
-    plt.savefig(f'{save_val_dir}/{noise_level}p_noise_{epochs}epochs.png')
+    plt.savefig(os.path.join(save_val_dir, f'{noise_level}p_noise_{epochs}epochs.png'))
     plt.close() #画完图后关闭画布，防止与下次绘图交叉影响
 
 def masked_psnr(clean, denoised, mask, data_range=2.0):
@@ -49,11 +49,11 @@ def masked_psnr(clean, denoised, mask, data_range=2.0):
 
 def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, save_model_path, noise_level,val_noisy_files, val_clean_files, val_mask_files, resume_checkpoint=None):
     #设置保存路径
-    folder_name = datetime.now().strftime("%Y%m%d%H%M")+f'_{noise_level}p'
+    folder_name = Path(save_model_path).name
     
-    save_val_dir = f'result/val/{folder_name}/'
+    save_val_dir = f'result/val/{folder_name}'
     Path(save_val_dir).mkdir(parents=True, exist_ok=True)
-    save_loss_dir = f'result/loss/{folder_name}/'
+    save_loss_dir = f'result/loss/{folder_name}'
     Path(save_loss_dir).mkdir(parents=True, exist_ok=True)
     
     #加载数据
@@ -156,10 +156,10 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
 
 def main():
     epochs = 100
-    noise_level = 6    #train不同模型时需要更改
+    noise_level = 4    #train不同模型时需要更改
 
     is_resume = True         #是否继续训练
-    resume_folder = "202603091727_6p" # 替换为实际中断的文件夹名
+    resume_folder = "202603101006_4p" # 替换为实际中断的文件夹名
     
     if is_resume:
         folder_name = resume_folder

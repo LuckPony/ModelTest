@@ -1,47 +1,90 @@
 import torch
 import torch.nn as nn
 
-class DnCNN_Decoupled(nn.Module):
-    def __init__(self, num_directions=288, num_layers=12, features=64):
-        """
-        num_directions: 数据的总梯度方向数 (这里固定为 288)
-        num_layers: 网络的总深度
-        features: 隐藏层提取的特征通道数
-        """
-        super(DnCNN_Decoupled, self).__init__()
+class ShellAwareDnCNN(nn.Module):
+    def __init__(self, num_b0=18, num_b1000=90, num_b2000=90, features=64, num_layers=12):
+        super(ShellAwareDnCNN, self).__init__()
+        self.num_b0 = num_b0
+        self.num_b1000 = num_b1000
+        self.num_b2000 = num_b2000
         
-        # 模块一：角域信息交互模块 (Angular Interaction Module)
-        # 使用 1x1 卷积跨越所有 288 个梯度方向提取非线性物理特征
-        self.angular_module = nn.Sequential(
-            nn.Conv2d(num_directions, features, kernel_size=1, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(features, features, kernel_size=1, bias=True),
+        # ==========================================
+        # 第一阶段：壳层独立提取 (Shell-Specific Extraction)
+        # 作用：消除 b 值差异带来的巨大数值鸿沟
+        # ==========================================
+        self.b0_extract = nn.Sequential(
+            nn.Conv2d(num_b0, features, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True)
+        )
+        self.b1000_extract = nn.Sequential(
+            nn.Conv2d(num_b1000, features, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True)
+        )
+        self.b2000_extract = nn.Sequential(
+            nn.Conv2d(num_b2000, features, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True)
         )
 
-        # 模块二：空间上下文提取模块 (Spatial Context Module)
-        # 接收角域融合后的特征，在 2D 物理空间上进行去噪
-        spatial_layers = []
-        for _ in range(num_layers - 2):
-            spatial_layers.append(nn.Conv2d(features, features, kernel_size=3, padding=1, bias=False))
-            spatial_layers.append(nn.BatchNorm2d(features))
-            spatial_layers.append(nn.ReLU(inplace=True))
-            
-        # 最后一层：将特征映射回原有的 288 个方向，输出所有方向的预测噪声
-        spatial_layers.append(nn.Conv2d(features, num_directions, kernel_size=3, padding=1, bias=True))
+        # ==========================================
+        # 第二阶段：深层联合融合 (Deep Joint Fusion)
+        # 作用：在 192 维 (64*3) 的纯净特征空间内进行稠密推理
+        # ==========================================
+        fusion_layers = []
+        fusion_channels = features * 3  # 64 + 64 + 64 = 192 维特征
         
-        self.spatial_module = nn.Sequential(*spatial_layers)
+        for _ in range(num_layers - 2):
+            fusion_layers.append(nn.Conv2d(fusion_channels, fusion_channels, kernel_size=3, padding=1, bias=False))
+            fusion_layers.append(nn.BatchNorm2d(fusion_channels))
+            fusion_layers.append(nn.ReLU(inplace=True))
+            
+        self.fusion_module = nn.Sequential(*fusion_layers)
+
+        # ==========================================
+        # 第三阶段：噪声联合重建 (Joint Noise Reconstruction)
+        # 作用：将特征重新映射回 198 个物理方向的纯噪声
+        # ==========================================
+        total_directions = num_b0 + num_b1000 + num_b2000
+        self.noise_reconstruct = nn.Conv2d(fusion_channels, total_directions, kernel_size=3, padding=1, bias=True)
 
     def forward(self, x):
-        # 输入 x 维度: [Batch, 288, H, W]
+        # 假设输入 x 的通道已经按照 b=0, b=1000, b=2000 排序好
+        # x shape: [Batch, 198, H, W]
         
-        # 1. 跨梯度方向融合
-        feat = self.angular_module(x) # 维度变为: [Batch, features, H, W]
-        
-        # 2. 空间特征去噪
-        noise = self.spatial_module(feat) # 维度变回: [Batch, 288, H, W]
-        
-        # 3. 残差学习
+        # 1. 物理壳层分离
+        x_b0 = x[:, :self.num_b0, :, :]
+        x_b1000 = x[:, self.num_b0 : self.num_b0+self.num_b1000, :, :]
+        x_b2000 = x[:, self.num_b0+self.num_b1000 :, :, :]
+
+        # 2. 独立特征提取
+        feat_b0 = self.b0_extract(x_b0)
+        feat_b1000 = self.b1000_extract(x_b1000)
+        feat_b2000 = self.b2000_extract(x_b2000)
+
+        # 3. 特征级拼接 (Cat): [Batch, 192, H, W]
+        feat_fused = torch.cat([feat_b0, feat_b1000, feat_b2000], dim=1)
+
+        # 4. 空间-角域联合去噪推理
+        feat_processed = self.fusion_module(feat_fused)
+
+        # 5. 预测 198 个方向的噪声并执行残差减法
+        noise = self.noise_reconstruct(feat_processed)
         out = x - noise
         
         return out
+    
+
+#     #            x
+#             │
+#    ┌────────┼────────┐
+#    │        │        │
+#   b0      b1000    b2000
+#    │        │        │
+# extract  extract   extract
+#    │        │        │
+#    └──────concat─────┘
+#            │
+#         fusion
+#            │
+#      noise reconstruction
+#            │
+#          output
