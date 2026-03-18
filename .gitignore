@@ -1,3 +1,7 @@
 #忽略所有数据文件的上传
 *.nii.gz
 *.mif
+*.png
+*.pth
+__pycache__/
+*.pyc

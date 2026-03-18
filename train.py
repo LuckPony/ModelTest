@@ -48,7 +48,8 @@ def masked_psnr(clean, denoised, mask, data_range=2.0):
 
 def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, save_model_path, noise_level,val_noisy_files, val_clean_files, val_mask_files):
     #设置保存路径
-    folder_name = datetime.now().strftime("%Y%m%d%H%M")+f'_{noise_level}p'
+    # Reuse the model folder name so checkpoints, loss plots, and val images stay grouped together.
+    folder_name = Path(save_model_path).name
     
     save_val_dir = f'result/val/{folder_name}/'
     Path(save_val_dir).mkdir(parents=True, exist_ok=True)
@@ -61,7 +62,8 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
     #初始化模型
-    model = DnCNN(channels=1, num_layers=12, features=64).cuda()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = DnCNN(channels=1, num_layers=12, features=64).to(device)
 
     #损失函数和优化器
     
@@ -73,7 +75,7 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
         avg_loss = 0.0
         loop = tqdm(train_loader,leave=True, desc=f'Epoch {epoch+1}/{num_epochs}')
         for noisy,clean,mask in loop:
-            noisy, clean, mask = noisy.cuda(), clean.cuda(), mask.cuda()
+            noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
             optimizer.zero_grad()
             denoised = model(noisy)
             diff = (denoised - clean)**2
@@ -96,7 +98,7 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
             with torch.no_grad():
                     
                     for noisy, clean, mask in val_loader:
-                        noisy, clean, mask = noisy.cuda(), clean.cuda(), mask.cuda()
+                        noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
                         denoised = model(noisy).cpu().numpy().squeeze()
                         clean = clean.cpu().numpy().squeeze()
                         noisy = noisy.cpu().numpy().squeeze()

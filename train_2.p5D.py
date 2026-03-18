@@ -63,7 +63,8 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
     #初始化模型
-    model = DnCNN_2p5D(in_channels=3, out_channels=1, num_layers=12, features=64).cuda()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = DnCNN_2p5D(in_channels=3, out_channels=1, num_layers=12, features=64).to(device)
 
     #损失函数和优化器 (调整初始学习率为 0.0005)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
@@ -77,7 +78,8 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
     # 断点加载逻辑
     if resume_checkpoint is not None and os.path.isfile(resume_checkpoint):
         print(f"=> 发现检查点: '{resume_checkpoint}'，正在恢复训练...")
-        checkpoint = torch.load(resume_checkpoint)
+        # Map checkpoints onto the active device so CPU-only runs can resume safely.
+        checkpoint = torch.load(resume_checkpoint, map_location=device)
         
         model.load_state_dict(checkpoint['model_state_dict'])
         
@@ -99,7 +101,7 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
         avg_loss = 0.0
         loop = tqdm(train_loader,leave=True, desc=f'Epoch {epoch+1}/{num_epochs}')
         for noisy,clean,mask in loop:
-            noisy, clean, mask = noisy.cuda(), clean.cuda(), mask.cuda()
+            noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
             optimizer.zero_grad()
             denoised = model(noisy)
             diff = (denoised - clean)**2
@@ -139,7 +141,7 @@ def train(train_noisy_files, train_clean_files, train_mask_files, num_epochs, sa
             model.eval()
             with torch.no_grad():
                     for noisy, clean, mask in val_loader:
-                        noisy, clean, mask = noisy.cuda(), clean.cuda(), mask.cuda()
+                        noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
                         denoised = model(noisy).cpu().numpy().squeeze()
                         clean = clean.cpu().numpy().squeeze()
                         mask = mask.cpu().numpy().squeeze()

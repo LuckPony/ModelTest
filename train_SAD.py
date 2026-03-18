@@ -3,15 +3,14 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-# 【修改1：导入我们最新写好的分壳层网络】
+# 【核心修改 1】：导入最新的数据集和交替式 AS-2.5D 网络
 from Dataset.dataset_SAD import DenoiseDataset, ValDataset 
-from model.dncnn_SAD import ShellAwareDnCNN
+from model.dncnn_SAD import AS_Alternating_2p5D
 
 import torch.nn as nn
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import nibabel as nib
-from skimage.metrics import peak_signal_noise_ratio as psnr
 from datetime import datetime
 import numpy as np
 
@@ -19,11 +18,12 @@ def plot_loss(loss_list, noise_level, save_loss_dir):
     plt.plot(range(1, len(loss_list)+1), loss_list)
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title(f'Loss of Decoupled Net on {noise_level}% noise')
+    plt.title(f'Loss of AS-2.5D Net on {noise_level}% noise')
     plt.savefig(f'{save_loss_dir}/{noise_level}p_noise_loss_{len(loss_list)}epochs.png')
     plt.close()
 
-def plot_val(clean_slice, noisy_slice, denoised_slice, mask_slice, noise_level, epochs, save_val_dir):
+# 【核心修改 2】：增加 shell_name 参数，防止不同壳层的图片互相覆盖
+def plot_val(clean_slice, noisy_slice, denoised_slice, mask_slice, noise_level, epochs, shell_name, save_val_dir):
     psnr_noisy = masked_psnr(clean_slice, noisy_slice, mask_slice, data_range=2.0)
     psnr_denoised = masked_psnr(clean_slice, denoised_slice, mask_slice, data_range=2.0)
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -39,15 +39,16 @@ def plot_val(clean_slice, noisy_slice, denoised_slice, mask_slice, noise_level, 
         ax.set_title(title, fontsize=12, fontweight='bold')
         ax.axis('off')
 
+    plt.suptitle(f"Shell: {shell_name}", fontsize=14)
     plt.tight_layout()
-    plt.savefig(f'{save_val_dir}/{noise_level}p_noise_{epochs}epochs.png')
+    plt.savefig(f'{save_val_dir}/{noise_level}p_noise_{epochs}epochs_{shell_name}.png')
     plt.close()
 
 def masked_psnr(clean, denoised, mask, data_range=2.0):
     mse = ((clean - denoised) ** 2 * mask).sum() / (mask.sum() + 1e-8)
     return 10 * np.log10(data_range**2 / mse)
 
-# 【修改2：函数传参增加 val_bval_files】
+
 def train(train_noisy_files, train_clean_files, train_mask_files, train_bval_files, num_epochs, save_model_path, noise_level, val_noisy_files, val_clean_files, val_mask_files, val_bval_files, resume_checkpoint=None):
     folder_name = Path(save_model_path).name 
     
@@ -56,17 +57,22 @@ def train(train_noisy_files, train_clean_files, train_mask_files, train_bval_fil
     save_loss_dir = f'result/loss/{folder_name}/'
     Path(save_loss_dir).mkdir(parents=True, exist_ok=True)
     
-    train_dataset = DenoiseDataset(train_noisy_files, train_clean_files, train_mask_files, train_bval_files, patch_size=64)
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\n======================================")
+    print(f"🚀 AS-2.5D 模型训练开始！当前使用设备: {device}")
+    print(f"======================================\n")
     
-    # 【修改3：验证集正确传入 bval 文件】
+    train_dataset = DenoiseDataset(train_noisy_files, train_clean_files, train_mask_files, train_bval_files, patch_size=64)
+    # 注意：Windows下如果报错，将 num_workers 保持为 0，保留 pin_memory 加速
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, pin_memory=True)
+    
     val_dataset = ValDataset(val_noisy_files, val_clean_files, val_mask_files, val_bval_files)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
     # ==========================================
-    # 【修改4：初始化多壳层感知模型 (总通道数 18+90+90=198)】
+    # 初始化 AS-2.5D 模型
     # ==========================================
-    model = ShellAwareDnCNN(num_b0=18, num_b1000=90, num_b2000=90, num_layers=12).cuda()
+    model = AS_Alternating_2p5D(num_blocks=1, hidden_spatial=16).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
@@ -76,7 +82,7 @@ def train(train_noisy_files, train_clean_files, train_mask_files, train_bval_fil
 
     if resume_checkpoint is not None and os.path.isfile(resume_checkpoint):
         print(f"=> 发现检查点: '{resume_checkpoint}'，正在恢复训练...")
-        checkpoint = torch.load(resume_checkpoint)
+        checkpoint = torch.load(resume_checkpoint, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         if 'optimizer_state_dict' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -85,7 +91,7 @@ def train(train_noisy_files, train_clean_files, train_mask_files, train_bval_fil
             loss_log = checkpoint.get('loss_log', [])
             print(f"=> 成功加载完整检查点！从 Epoch {start_epoch + 1} 继续。")
     else:
-        print("=> 将从头开始训练多壳层解耦网络。")
+        print("=> 将从头开始训练角域-空域交替网络。")
 
     for epoch in range(start_epoch, num_epochs):
         model.train()
@@ -93,14 +99,27 @@ def train(train_noisy_files, train_clean_files, train_mask_files, train_bval_fil
         loop = tqdm(train_loader, leave=True, desc=f'Epoch {epoch+1}/{num_epochs}')
         
         for noisy, clean, mask in loop:
-            noisy, clean, mask = noisy.cuda(), clean.cuda(), mask.cuda()
+            noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
             optimizer.zero_grad()
             denoised = model(noisy)
             
             diff = (denoised - clean)**2
             
-            # 【修改5：通道数现在是 198 了，分母必须乘 198】
-            loss = (diff * mask).sum() / (mask.sum() * 198 + 1e-8)
+            # ==========================================
+            # 【核心修改 3：壳层加权均衡 Loss】
+            # 强制网络平等对待三个壳层的误差
+            # ==========================================
+            diff_b0 = diff[:, :18, :, :]
+            diff_b1k = diff[:, 18:108, :, :]
+            diff_b2k = diff[:, 108:, :, :]
+            
+            # mask 的形状是 (B, 1, H, W)，利用广播机制直接相乘
+            mse_b0 = (diff_b0 * mask).sum() / (mask.sum() * 18 + 1e-8)
+            mse_b1k = (diff_b1k * mask).sum() / (mask.sum() * 90 + 1e-8)
+            mse_b2k = (diff_b2k * mask).sum() / (mask.sum() * 90 + 1e-8)
+            
+            # 三者等权重相加
+            loss = mse_b0 + mse_b1k + mse_b2k
             
             loss.backward()
             optimizer.step()
@@ -121,6 +140,7 @@ def train(train_noisy_files, train_clean_files, train_mask_files, train_bval_fil
         }
         torch.save(checkpoint_state, f'{save_model_path}/checkpoint_latest.pth')
 
+        # 每 10 个 epoch 出一次验证图 (如果想看频繁点可以改成 5)
         if (epoch+1) % 10 == 0:
             plot_loss(loss_log, noise_level, save_loss_dir)
             torch.save(checkpoint_state, f'{save_model_path}/checkpoint_epoch_{epoch+1}.pth')
@@ -128,23 +148,26 @@ def train(train_noisy_files, train_clean_files, train_mask_files, train_bval_fil
             model.eval()
             with torch.no_grad():
                 for noisy, clean, mask in val_loader:
-                    noisy, clean, mask = noisy.cuda(), clean.cuda(), mask.cuda()
-                    denoised = model(noisy).cpu().numpy().squeeze(0) # Shape: (198, H, W)
-                    clean = clean.cpu().numpy().squeeze(0)
-                    mask = mask.cpu().numpy().squeeze(0)
+                    noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
+                    
+                    denoised_out = model(noisy).cpu().numpy().squeeze(0) # Shape: (198, H, W)
+                    clean_out = clean.cpu().numpy().squeeze(0)
+                    mask_vis = mask.cpu().numpy().squeeze(0)[0, :, :] 
+                    
+                    # 取出输入的中心层用于对比画图: noisy 是 [B, 3, 198, H, W]
+                    noisy_center = noisy[:, 1, :, :, :].cpu().numpy().squeeze(0) 
 
-                    # 【修改6：固定抽取第 0 个方向 (一个清晰的 b=0 图像) 进行可视化对比】
-                    vis_idx = 0 
-                    noisy_np = noisy.cpu().numpy().squeeze(0)
+                    # ==========================================
+                    # 【核心修改 4：同时输出三个壳层的代表方向图像！】
+                    # ==========================================
+                    vis_shells = [("b0", 0), ("b1000", 18 + 45), ("b2000", 108 + 45)]
                     
-                    noisy_vis = noisy_np[vis_idx, :, :]
-                    clean_vis = clean[vis_idx, :, :]
-                    denoised_vis = denoised[vis_idx, :, :]
-                    
-                    mask_vis = mask[0, :, :] 
-                    
-                    denoised_vis = denoised_vis * mask_vis + (-1) * (1 - mask_vis)
-                    plot_val(clean_vis, noisy_vis, denoised_vis, mask_vis, noise_level, epoch+1, save_val_dir)
+                    for shell_name, idx in vis_shells:
+                        n_v = noisy_center[idx, :, :]
+                        c_v = clean_out[idx, :, :]
+                        d_v = denoised_out[idx, :, :] * mask_vis + (-1) * (1 - mask_vis)
+                        
+                        plot_val(c_v, n_v, d_v, mask_vis, noise_level, epoch+1, shell_name, save_val_dir)
 
     torch.save(model.state_dict(), f'{save_model_path}/model_{noise_level}%noise_final.pth')
 
@@ -153,13 +176,14 @@ def main():
     noise_level = 2
     
     is_resume = False 
-    resume_folder = "20260309_decoupled" 
+    resume_folder = "" 
     
     if is_resume:
         folder_name = resume_folder
         resume_ckpt = f'result/model/{folder_name}/checkpoint_latest.pth'
     else:
-        folder_name = datetime.now().strftime("%Y%m%d%H%M")+f'_decoupled_{noise_level}p'
+        # 文件夹命名更新为 AS2p5D
+        folder_name = datetime.now().strftime("%Y%m%d%H%M")+f'_AS2p5D_{noise_level}p'
         resume_ckpt = None
         
     save_model_path = f'result/model/{folder_name}/'
@@ -168,7 +192,7 @@ def main():
     train_noisy_path = f'data/{noise_level}_percent_noise/' 
     train_clean_path = 'data/gt/'
     train_mask_path = 'data/mask/'
-    train_bval_path = 'data/bvals/' # 确保你的文件夹叫 bvals
+    train_bval_path = 'data/bvals/'
     
     train_noisy_files, train_clean_files, train_mask_files, train_bval_files = [], [], [], []
     
@@ -176,16 +200,13 @@ def main():
         train_clean_files.append(train_clean_path+file)
         train_noisy_files.append(train_noisy_path+Path(Path(file).stem).stem+f'_{noise_level}%noise.nii.gz')
         train_mask_files.append(train_mask_path+Path(Path(file).stem).stem+f'_mask.nii.gz')
-        # 注意后缀名：确认你的文件是叫 .bval 还是没后缀
         train_bval_files.append(train_bval_path+Path(Path(file).stem).stem+'_bval') 
         
-    val_noisy_files = train_noisy_files
-    val_clean_files = train_clean_files
-    val_mask_files = train_mask_files
-    # 【修改7：给验证集也分配 bval 文件】
-    val_bval_files = train_bval_files
+    val_noisy_files = [f"data/val/sub-125525__dwi_filtered_{noise_level}%noise.nii.gz"]
+    val_clean_files = ["data/val/sub-125525__dwi_filtered.nii.gz"]
+    val_mask_files = ["data/val/sub-125525__dwi_filtered_mask.nii.gz"]
+    val_bval_files = ["data/val/sub-125525__dwi_filtered_bval"]
 
-    # 【修改8：传入完整的参数】
     train(train_noisy_files, train_clean_files, train_mask_files, train_bval_files, epochs, save_model_path, noise_level, val_noisy_files, val_clean_files, val_mask_files, val_bval_files, resume_checkpoint=resume_ckpt)
 
 if __name__ == '__main__':

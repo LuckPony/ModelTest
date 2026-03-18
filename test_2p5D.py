@@ -1,123 +1,123 @@
 import json
 import os
-from pathlib import Path
-import torch
-from torch.utils.data import DataLoader
-from model.dncnn_2p5D import DnCNN_2p5D 
-from Dataset.dataset_2p5D import TestDataset
-import nibabel as nib
-from nibabel.loadsave import load, save
-from nibabel.nifti1 import Nifti1Image
-import numpy as np
-from skimage.metrics import structural_similarity as ssim
-from skimage.metrics import peak_signal_noise_ratio as psnr
 from datetime import datetime
+from pathlib import Path
+
+import nibabel as nib
+import numpy as np
+import torch
+from nibabel.loadsave import save
+from nibabel.nifti1 import Nifti1Image
+from skimage.metrics import structural_similarity as ssim
+from torch.utils.data import DataLoader
+
+from Dataset.dataset_2p5D import TestDataset
+from model.dncnn_2p5D import DnCNN_2p5D
+
 
 def unnormalize(x, max_val, min_val):
     x = (x + 1) / 2
-    x = x * (max_val - min_val) + min_val
-    return x
+    return x * (max_val - min_val) + min_val
+
 
 def masked_psnr(clean, denoised, mask, data_range):
     mse = ((clean - denoised) ** 2 * mask).sum() / (mask.sum() + 1e-8)
-    return 10 * np.log10(data_range ** 2 / mse)
+    return 10 * np.log10(data_range**2 / mse)
+
+
+def masked_nrmse(clean, denoised, mask, data_range):
+    mse = ((clean - denoised) ** 2 * mask).sum() / (mask.sum() + 1e-8)
+    return np.sqrt(mse) / (data_range + 1e-8)
+
 
 def test(noisy_files, clean_files, mask_files, model_path, norm_path, save_path, noise_level):
-    folder_data = datetime.now().strftime("%Y%m%d%H%M")+f'_{noise_level}p'
-    
-    # 加载数据
+    folder_data = datetime.now().strftime("%Y%m%d%H%M") + f"_{noise_level}p"
+
     print("Loading data...")
     test_dataset = TestDataset(noisy_files, clean_files, mask_files)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
-    
-    # 读取测试数据集归一化时的参数
+
     with open(norm_path, "r") as f:
         stat_dict = json.load(f)
 
-    # 载入模型并配置模型参数
     print("Loading model...")
-    
-    model = DnCNN_2p5D(in_channels=3, out_channels=1, num_layers=12, features=64)
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = DnCNN_2p5D(in_channels=3, out_channels=1, num_layers=12, features=64)
+    # 将检查点映射到当前活动设备上，以便仅使用 CPU 的评估也能正常工作。
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
+    model.eval()
 
-    # 初始化4D volume以保证按照2D切片最终可以再拼接成4D图像
-    denoised_volumes = {}  # key: file_id → 4D array { [D,W,H,Dd],[...],... }
-    for f_id, clean_file in enumerate(clean_files):
-        clean_img = nib.load(clean_file).get_fdata()   
-        D, W, H, Dd = clean_img.shape
-        denoised_volumes[f_id] = np.zeros((D, W, H, Dd))
-    
-    # 模型预测
+    denoised_volumes = {}
+    for file_id, clean_file in enumerate(clean_files):
+        clean_img = nib.load(clean_file).get_fdata()
+        depth, height, width, directions = clean_img.shape
+        denoised_volumes[file_id] = np.zeros((depth, height, width, directions))
+
     print("Testing...")
-    for noisy, clean, mask, f_id, z, d in test_loader:
+    for noisy, clean, mask, file_id, z, d in test_loader:
         noisy = noisy.to(device)
         clean = clean.to(device)
         mask = mask.to(device)
-        
-        # 开始预测
+
         with torch.no_grad():
             denoised = model(noisy).cpu().numpy().squeeze()
             clean = clean.cpu().numpy().squeeze()
             mask = mask.cpu().numpy().squeeze()
-            
-            # 【修改3】：noisy 本身是 [3, H, W]，提取索引 1 (中心层)
-            noisy_center = noisy.cpu().numpy().squeeze()[1, :, :]
-        
-        # 反归一化 (使用 max_val 和 min_val 替代原生 max/min)
-        max_val = stat_dict[str(f_id.item())]["noisy"]['max']
-        min_val = stat_dict[str(f_id.item())]["noisy"]['min']
-        
+
+        current_file_id = file_id.item()
+        max_val = stat_dict[str(current_file_id)]["noisy"]["max"]
+        min_val = stat_dict[str(current_file_id)]["noisy"]["min"]
+
         denoised = unnormalize(denoised, max_val, min_val)
         clean = unnormalize(clean, max_val, min_val)
-        noisy_center = unnormalize(noisy_center, max_val, min_val)
-        
         denoised = denoised * mask
-        
-        # 保存进初始化的4D volume
-        denoised_volumes[f_id.item()][z.item(), :, :, d.item()] = denoised
 
-        # 进行结果评估 (注意 data_range 传入 max_val - min_val)
-        psnr_val = masked_psnr(clean, denoised, mask, data_range=max_val-min_val)
-        ssim_val = ssim(clean, denoised, data_range=max_val - min_val)
-        rmse_val = (np.sqrt(np.mean((clean - denoised) ** 2))) / (max_val - min_val) 
-        
-        print(f"File {f_id.item()} Slice {z.item()} Dir {d.item()} -- PSNR={psnr_val:.2f}, SSIM={ssim_val:.4f}, RMSE={rmse_val:.4f}")
-        
-    # 保存最终的去噪结果
+        denoised_volumes[current_file_id][z.item(), :, :, d.item()] = denoised
+
+        # 在计算 SSIM/RMSE 之前对两个输入信号进行掩码处理，以便计算出的指标与掩码后的 PSNR 区域相匹配。
+        clean_eval = clean * mask
+        denoised_eval = denoised * mask
+        psnr_val = masked_psnr(clean, denoised, mask, data_range=max_val - min_val)
+        ssim_val = ssim(clean_eval, denoised_eval, data_range=max_val - min_val)
+        rmse_val = masked_nrmse(clean, denoised, mask, data_range=max_val - min_val)
+        print(
+            f"File {current_file_id} Slice {z.item()} Dir {d.item()} -- "
+            f"PSNR={psnr_val:.2f}, SSIM={ssim_val:.4f}, RMSE={rmse_val:.4f}"
+        )
+
     print("Saving denoised volumes...")
     output_dir = os.path.join(save_path, folder_data)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
-    for f_id, vol in denoised_volumes.items():
-        out_file = os.path.join(output_dir, f"{f_id}_{noise_level}p_denoised.nii.gz")
-        clean_image = nib.load(clean_files[f_id])  
-        affine = clean_image.affine  
-        save(Nifti1Image(vol, affine), out_file)  
+
+    for file_id, volume in denoised_volumes.items():
+        out_file = os.path.join(output_dir, f"{file_id}_{noise_level}p_denoised.nii.gz")
+        clean_image = nib.load(clean_files[file_id])
+        save(Nifti1Image(volume, clean_image.affine), out_file)
         print("Saved:", out_file)
+
 
 def main():
     noise_level = 4
-    data_folder = "202603101006_4p" 
+    data_folder = "202603101006_4p"
     test_noisy_path = "./data/test/noise/"
     test_clean_path = "./data/test/gt/"
-    test_mask_path = './data/test/mask/'
+    test_mask_path = "./data/test/mask/"
     model_path = f"result/model/{data_folder}/model_{noise_level}%noise_final.pth"
     norm_path = "normalize/test_minmax.json"
-    save_path = f"result/denoised"
-    
+    save_path = "result/denoised"
+
     test_noisy_files = []
     test_clean_files = []
     test_mask_files = []
-    
     for file in os.listdir(test_clean_path):
+        stem = Path(Path(file).stem).stem
         test_clean_files.append(test_clean_path + file)
-        test_noisy_files.append(test_noisy_path + Path(Path(file).stem).stem + f'_{noise_level}%noise.nii.gz')
-        test_mask_files.append(test_mask_path + Path(Path(file).stem).stem + '_mask.nii.gz')
-        
+        test_noisy_files.append(test_noisy_path + stem + f"_{noise_level}%noise.nii.gz")
+        test_mask_files.append(test_mask_path + stem + "_mask.nii.gz")
+
     test(test_noisy_files, test_clean_files, test_mask_files, model_path, norm_path, save_path, noise_level)
 
+
 if __name__ == "__main__":
-    main() 
+    main()
